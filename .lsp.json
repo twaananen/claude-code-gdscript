@@ -1,0 +1,9 @@
+{
+  "gdscript": {
+    "command": "node",
+    "args": ["bridge/gdscript-lsp-bridge.mjs"],
+    "extensionToLanguage": {
+      ".gd": "gdscript"
+    }
+  }
+}

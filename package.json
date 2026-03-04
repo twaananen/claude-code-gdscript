@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-gdscript",
+  "version": "0.1.0",
+  "description": "GDScript language support for Claude Code via Godot's built-in LSP",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    ".claude-plugin/",
+    ".lsp.json",
+    "bridge/"
+  ]
+}
