@@ -6,7 +6,6 @@
   "type": "module",
   "files": [
     ".claude-plugin/",
-    ".lsp.json",
     "bridge/"
   ]
 }

@@ -24,16 +24,13 @@ No external dependencies — just Node.js (already required by Claude Code).
 
 ## Installation
 
-```sh
-claude /install-plugin ~/personal/claude-code-gdscript
-```
-
-Or from a clone:
+Use Claude Code's plugin command to install:
 
 ```sh
-git clone https://github.com/youruser/claude-code-gdscript.git
-claude /install-plugin ./claude-code-gdscript
+claude plugin add /path/to/claude-code-gdscript
 ```
+
+Or manually register by adding an entry to `~/.claude/plugins/installed_plugins.json` pointing to the plugin directory.
 
 ## Usage
 
