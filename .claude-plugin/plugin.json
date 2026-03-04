@@ -8,7 +8,6 @@
   "homepage": "https://github.com/twaananen/claude-code-gdscript",
   "repository": "https://github.com/twaananen/claude-code-gdscript",
   "license": "MIT",
-  "category": "development",
   "lspServers": {
     "gdscript": {
       "command": "node",
