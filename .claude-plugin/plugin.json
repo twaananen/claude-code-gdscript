@@ -2,11 +2,17 @@
   "name": "gdscript",
   "description": "GDScript language support for Claude Code via Godot's built-in LSP",
   "version": "0.1.0",
+  "author": {
+    "name": "Tommi Waananen"
+  },
+  "homepage": "https://github.com/twaananen/claude-code-gdscript",
+  "repository": "https://github.com/twaananen/claude-code-gdscript",
+  "license": "MIT",
   "category": "development",
   "lspServers": {
     "gdscript": {
       "command": "node",
-      "args": ["bridge/gdscript-lsp-bridge.mjs"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bridge/gdscript-lsp-bridge.mjs"],
       "extensionToLanguage": {
         ".gd": "gdscript"
       }

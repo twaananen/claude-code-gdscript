@@ -1,0 +1,22 @@
+{
+  "name": "claude-code-gdscript",
+  "owner": {
+    "name": "Tommi Waananen"
+  },
+  "metadata": {
+    "description": "GDScript language support for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "gdscript",
+      "source": "./",
+      "description": "GDScript language support for Claude Code via Godot's built-in LSP",
+      "version": "0.1.0",
+      "author": {
+        "name": "Tommi Waananen"
+      },
+      "category": "development"
+    }
+  ]
+}
