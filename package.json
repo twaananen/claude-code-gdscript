@@ -4,6 +4,9 @@
   "description": "GDScript language support for Claude Code via Godot's built-in LSP",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "files": [
     ".claude-plugin/",
     "bridge/"
