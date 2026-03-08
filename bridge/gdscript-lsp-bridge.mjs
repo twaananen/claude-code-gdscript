@@ -65,12 +65,17 @@ function describeError(error) {
   };
 }
 
+const SKIP_DIRS = new Set([
+  "node_modules", "__pycache__", "build", "dist", "target", "vendor",
+]);
+
 /**
  * Finds the actual Godot project root by searching for project.godot.
  * Claude Code sends the workspace CWD as rootUri, but the Godot project
- * may be in a subdirectory (e.g., game/).
+ * may be in a subdirectory (e.g., game/). Searches recursively, skipping
+ * hidden directories and common large non-project directories.
  */
-function findGodotProjectRoot(startPath) {
+export function findGodotProjectRoot(startPath) {
   if (existsSync(path.join(startPath, "project.godot"))) {
     return startPath;
   }
@@ -78,11 +83,13 @@ function findGodotProjectRoot(startPath) {
   try {
     const entries = readdirSync(startPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith(".")) {
-        const subPath = path.join(startPath, entry.name);
-        if (existsSync(path.join(subPath, "project.godot"))) {
-          return subPath;
-        }
+      if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
+      const subPath = path.join(startPath, entry.name);
+      const result = findGodotProjectRoot(subPath);
+      if (result) {
+        return result;
       }
     }
   } catch {
@@ -332,4 +339,11 @@ async function main() {
   }
 }
 
-main();
+// Only run when executed directly, not when imported for testing.
+const isDirectRun =
+  process.argv[1] &&
+  import.meta.url === `file://${process.argv[1]}`;
+
+if (isDirectRun) {
+  main();
+}
