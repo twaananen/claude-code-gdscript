@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -101,6 +101,32 @@ test("withProjectLock recovers from a stale lock file", async () => {
     });
 
     assert.equal(ranTask, true);
+  } finally {
+    await rm(registryDir, { force: true, recursive: true });
+  }
+});
+
+test("withProjectLock does not clear malformed lock contents that may still be active", async () => {
+  const registryDir = await mkdtemp(path.join(tmpdir(), "gdscript-lsp-malformed-lock-"));
+
+  try {
+    const projectRoot = "/Users/test/malformed-lock-project";
+    const { lockPath } = getProjectRecordPaths({ projectRoot, registryDir });
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "{");
+
+    await assert.rejects(
+      withProjectLock({
+        projectRoot,
+        registryDir,
+        retryDelayMs: 5,
+        timeoutMs: 25,
+        async task() {},
+      }),
+      /Timed out waiting for project lock/
+    );
+
+    assert.equal(await readFile(lockPath, "utf8"), "{");
   } finally {
     await rm(registryDir, { force: true, recursive: true });
   }

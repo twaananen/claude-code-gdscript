@@ -217,7 +217,7 @@ test("resolveProjectBackend terminates a launched backend when startup verificat
   }
 });
 
-test("resolveProjectBackend terminates an unreachable recorded backend before relaunching", async () => {
+test("resolveProjectBackend drops an unreachable recorded backend without signaling its pid", async () => {
   const registryDir = await mkdtemp(path.join(tmpdir(), "gdscript-lsp-unhealthy-"));
   const projectRoot = "/Users/test/unhealthy-project";
   const terminated = [];
@@ -250,7 +250,7 @@ test("resolveProjectBackend terminates an unreachable recorded backend before re
     });
 
     assert.equal(backend.port, 6401);
-    assert.deepEqual(terminated, [12345]);
+    assert.deepEqual(terminated, []);
   } finally {
     await rm(registryDir, { force: true, recursive: true });
   }

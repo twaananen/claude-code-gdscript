@@ -134,8 +134,9 @@ async function clearIfStaleLock(lockPath) {
       return true;
     }
 
-    await unlink(lockPath).catch(() => {});
-    return true;
+    // Treat malformed lock contents as still active. Another process may have
+    // created the file and not finished writing its metadata yet.
+    return false;
   }
 
   return false;

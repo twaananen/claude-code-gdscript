@@ -138,7 +138,6 @@ async function readHealthyRecord({
   healthCheck,
   projectRoot,
   registryDir,
-  terminateProcess: terminateProcessImpl = terminateProcess,
 }) {
   const record = await readProjectRecord({ projectRoot, registryDir });
   if (!record) {
@@ -155,7 +154,6 @@ async function readHealthyRecord({
   }
 
   if (deleteStale) {
-    await terminateProcessImpl(record.pid);
     await deleteProjectRecord({ projectRoot, registryDir });
   }
   return null;
@@ -197,7 +195,6 @@ export async function resolveProjectBackend({
     healthCheck,
     projectRoot,
     registryDir,
-    terminateProcess: terminateProcessImpl,
   });
   if (existingRecord) {
     return { ...existingRecord, source: "registry" };
@@ -214,7 +211,6 @@ export async function resolveProjectBackend({
         healthCheck,
         projectRoot,
         registryDir,
-        terminateProcess: terminateProcessImpl,
       });
       if (healthyRecord) {
         return { ...healthyRecord, source: "registry" };
