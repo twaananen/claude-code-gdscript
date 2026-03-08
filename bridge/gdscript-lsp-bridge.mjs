@@ -1,144 +1,298 @@
 #!/usr/bin/env node
 
-// TCP-to-stdio bridge for Godot's built-in GDScript LSP server.
-// Reads LSP JSON-RPC messages from stdin (Claude Code) and forwards them
-// to Godot's LSP over TCP, and vice versa.
+import net from "node:net";
+import path from "node:path";
 
-import { connect } from "net";
+import {
+  LspParser,
+  encodeLspMessage,
+  extractProjectContextFromMessage,
+} from "./lsp-protocol.mjs";
+import { normalizeProjectRoot } from "./project-registry.mjs";
+import { resolveProjectBackend } from "./project-supervisor.mjs";
 
-const HOST = process.env.GODOT_LSP_HOST || "127.0.0.1";
-const PORT = parseInt(process.env.GODOT_LSP_PORT || "6005", 10);
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY_MS = 500;
+const CONFIG = {
+  attachHost: process.env.GODOT_LSP_HOST || "127.0.0.1",
+  attachPort: Number.parseInt(process.env.GODOT_LSP_PORT || "6005", 10),
+  connectTimeoutMs: Number.parseInt(
+    process.env.GODOT_LSP_CONNECT_TIMEOUT_MS || "1000",
+    10
+  ),
+  initialMaxAttempts: Number.parseInt(
+    process.env.GODOT_LSP_INITIAL_MAX_ATTEMPTS || "5",
+    10
+  ),
+  mode: process.env.GODOT_LSP_MODE || "auto",
+  projectRootOverride: process.env.GODOT_PROJECT_ROOT || null,
+  registryDir: process.env.GODOT_LSP_REGISTRY_DIR || undefined,
+  retryDelayMs: Number.parseInt(
+    process.env.GODOT_LSP_RETRY_DELAY_MS || "500",
+    10
+  ),
+};
 
-const log = (msg) => process.stderr.write(`[gdscript-lsp-bridge] ${msg}\n`);
+const state = {
+  backend: null,
+  connectPromise: null,
+  currentSocket: null,
+  pendingBodies: [],
+  projectContext: CONFIG.projectRootOverride
+    ? {
+        clientName: "env-override",
+        projectName: path.basename(normalizeProjectRoot(CONFIG.projectRootOverride)),
+        projectRoot: normalizeProjectRoot(CONFIG.projectRootOverride),
+      }
+    : null,
+  shuttingDown: false,
+};
 
-// --- LSP message framing ---
+function log(event, details = {}) {
+  process.stderr.write(
+    `[gdscript-lsp-bridge] ${JSON.stringify({
+      event,
+      timestamp: new Date().toISOString(),
+      ...details,
+    })}\n`
+  );
+}
 
-// Parses LSP messages from a stream of raw bytes. LSP uses:
-//   Content-Length: <N>\r\n\r\n<JSON payload of N bytes>
-class LspParser {
-  constructor(onMessage) {
-    this.onMessage = onMessage;
-    this.buffer = Buffer.alloc(0);
-    this.contentLength = -1;
+function describeError(error) {
+  return {
+    code: error?.code,
+    message: error?.message || String(error),
+    name: error?.name,
+  };
+}
+
+function parseJsonMessage(body) {
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    return null;
   }
+}
 
-  feed(data) {
-    this.buffer = Buffer.concat([this.buffer, data]);
-    this._parse();
-  }
+function connectSocket({ host, port, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host, port });
 
-  _parse() {
-    while (true) {
-      if (this.contentLength === -1) {
-        // Look for the end of headers
-        const headerEnd = this.buffer.indexOf("\r\n\r\n");
-        if (headerEnd === -1) return;
+    const cleanup = () => {
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("timeout", onTimeout);
+    };
 
-        const headers = this.buffer.subarray(0, headerEnd).toString("ascii");
-        const match = headers.match(/Content-Length:\s*(\d+)/i);
-        if (!match) {
-          log(`Malformed LSP header, discarding: ${headers}`);
-          this.buffer = this.buffer.subarray(headerEnd + 4);
-          continue;
-        }
+    const onConnect = () => {
+      cleanup();
+      socket.setTimeout(0);
+      resolve(socket);
+    };
+    const onError = (error) => {
+      cleanup();
+      socket.destroy();
+      reject(error);
+    };
+    const onTimeout = () => {
+      onError(new Error(`Timed out connecting to ${host}:${port}`));
+    };
 
-        this.contentLength = parseInt(match[1], 10);
-        this.buffer = this.buffer.subarray(headerEnd + 4);
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    socket.once("timeout", onTimeout);
+  });
+}
+
+async function connectSocketWithRetry({ host, port }) {
+  let attempt = 1;
+
+  while (attempt <= CONFIG.initialMaxAttempts) {
+    try {
+      return await connectSocket({
+        host,
+        port,
+        timeoutMs: CONFIG.connectTimeoutMs,
+      });
+    } catch (error) {
+      if (attempt >= CONFIG.initialMaxAttempts) {
+        throw new Error(
+          `Failed to connect to Godot LSP at ${host}:${port} after ${CONFIG.initialMaxAttempts} attempts: ${error.message}`
+        );
       }
 
-      // Wait until we have the full body
-      if (this.buffer.length < this.contentLength) return;
-
-      const body = this.buffer.subarray(0, this.contentLength);
-      this.buffer = this.buffer.subarray(this.contentLength);
-      this.contentLength = -1;
-
-      this.onMessage(body);
+      const delay = CONFIG.retryDelayMs * 2 ** (attempt - 1);
+      log("connect_retry", {
+        attempt,
+        delayMs: delay,
+        host,
+        port,
+        ...describeError(error),
+      });
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      attempt += 1;
     }
   }
+
+  throw new Error(`Failed to connect to Godot LSP at ${host}:${port}`);
 }
 
-function encodeLspMessage(body) {
-  const len = Buffer.byteLength(body);
-  return Buffer.from(`Content-Length: ${len}\r\n\r\n${body}`);
-}
-
-// --- Connection management ---
-
-function connectToGodot(attempt = 1) {
-  return new Promise((resolve, reject) => {
-    const socket = connect({ host: HOST, port: PORT }, () => {
-      log(`Connected to Godot LSP at ${HOST}:${PORT}`);
-      resolve(socket);
-    });
-
-    socket.once("error", (err) => {
-      if (attempt >= MAX_RETRIES) {
-        reject(
-          new Error(
-            `Failed to connect to Godot LSP at ${HOST}:${PORT} after ${MAX_RETRIES} attempts: ${err.message}`
-          )
-        );
-        return;
-      }
-
-      const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-      log(
-        `Connection attempt ${attempt} failed (${err.message}), retrying in ${delay}ms...`
-      );
-      setTimeout(() => connectToGodot(attempt + 1).then(resolve, reject), delay);
-    });
-  });
-}
-
-// --- Main ---
-
-async function main() {
-  let socket;
-  try {
-    socket = await connectToGodot();
-  } catch (err) {
-    log(err.message);
-    log(
-      "Make sure Godot editor is running, or start headless: godot --gdscript-lsp --path <project>"
-    );
-    process.exit(1);
+function flushPendingBodies() {
+  if (!state.currentSocket?.writable) {
+    return;
   }
 
-  // stdin → TCP (Claude Code → Godot)
-  const stdinParser = new LspParser((body) => {
-    socket.write(encodeLspMessage(body));
-  });
+  while (state.pendingBodies.length > 0) {
+    const body = state.pendingBodies.shift();
+    state.currentSocket.write(encodeLspMessage(body));
+  }
+}
 
-  process.stdin.on("data", (chunk) => stdinParser.feed(chunk));
-
-  // TCP → stdout (Godot → Claude Code)
+function attachSocket(socket, backend) {
   const tcpParser = new LspParser((body) => {
     process.stdout.write(encodeLspMessage(body));
   });
 
   socket.on("data", (chunk) => tcpParser.feed(chunk));
+  socket.on("close", (hadError) => {
+    if (socket !== state.currentSocket) {
+      return;
+    }
 
-  // Clean shutdown
-  const shutdown = () => {
-    socket.destroy();
-    process.exit(0);
-  };
+    state.currentSocket = null;
+    log("socket_closed", {
+      hadError,
+      host: backend.host,
+      port: backend.port,
+      projectRoot: backend.projectRoot,
+    });
 
+    // Force a clean restart so Claude replays initialize and document state.
+    process.exit(1);
+  });
+  socket.on("error", (error) => {
+    if (socket !== state.currentSocket) {
+      return;
+    }
+
+    log("socket_error", {
+      host: backend.host,
+      port: backend.port,
+      projectRoot: backend.projectRoot,
+      ...describeError(error),
+    });
+  });
+}
+
+async function ensureConnected() {
+  if (state.shuttingDown || state.currentSocket || state.connectPromise) {
+    return;
+  }
+
+  if (CONFIG.mode !== "attach" && !state.projectContext) {
+    return;
+  }
+
+  state.connectPromise = (async () => {
+    try {
+      const backend = await resolveProjectBackend({
+        connectTimeoutMs: CONFIG.connectTimeoutMs,
+        host: CONFIG.attachHost,
+        mode: CONFIG.mode,
+        port: CONFIG.attachPort,
+        projectRoot: state.projectContext?.projectRoot,
+        registryDir: CONFIG.registryDir,
+      });
+      const socket = await connectSocketWithRetry({
+        host: backend.host,
+        port: backend.port,
+      });
+
+      state.backend = backend;
+      state.currentSocket = socket;
+      attachSocket(socket, backend);
+      flushPendingBodies();
+
+      log("connected", {
+        host: backend.host,
+        mode: backend.mode,
+        port: backend.port,
+        projectRoot: backend.projectRoot,
+        source: backend.source,
+      });
+    } catch (error) {
+      log("connect_failed", {
+        mode: CONFIG.mode,
+        projectRoot: state.projectContext?.projectRoot || null,
+        ...describeError(error),
+      });
+
+      log("connect_help", {
+        message:
+          CONFIG.mode === "attach"
+            ? "Run Godot for this project and point GODOT_LSP_PORT at the matching editor instance."
+            : "Ensure Godot is available on PATH or set GODOT_EDITOR_PATH, or switch to GODOT_LSP_MODE=attach.",
+      });
+      process.exit(1);
+    }
+  })().finally(() => {
+    state.connectPromise = null;
+  });
+
+  return state.connectPromise;
+}
+
+function shutdown() {
+  state.shuttingDown = true;
+
+  state.currentSocket?.destroy();
+  process.exit(0);
+}
+
+async function main() {
+  log("startup", {
+    attachHost: CONFIG.attachHost,
+    attachPort: CONFIG.attachPort,
+    mode: CONFIG.mode,
+    projectRootOverride: state.projectContext?.projectRoot || null,
+    registryDir: CONFIG.registryDir || "default",
+  });
+
+  const stdinParser = new LspParser((body) => {
+    const message = parseJsonMessage(body);
+    const projectContext = extractProjectContextFromMessage(body);
+    if (projectContext && !state.projectContext) {
+      state.projectContext = projectContext;
+      log("project_context_resolved", projectContext);
+    }
+
+    if (
+      CONFIG.mode !== "attach" &&
+      !state.projectContext &&
+      message?.method === "initialize"
+    ) {
+      log("initialize_missing_project_root", {
+        message:
+          "Set GODOT_PROJECT_ROOT or make sure the client sends rootUri, rootPath, or workspaceFolders.",
+      });
+      process.exit(1);
+    }
+
+    if (state.currentSocket?.writable && !state.connectPromise) {
+      state.currentSocket.write(encodeLspMessage(body));
+      return;
+    }
+
+    state.pendingBodies.push(Buffer.from(body));
+    void ensureConnected();
+  });
+
+  process.stdin.on("data", (chunk) => stdinParser.feed(chunk));
   process.stdin.on("end", shutdown);
   process.stdin.on("close", shutdown);
 
-  socket.on("close", () => {
-    log("Godot LSP connection closed");
-    process.exit(0);
-  });
-
-  socket.on("error", (err) => {
-    log(`TCP error: ${err.message}`);
-    process.exit(1);
-  });
+  if (CONFIG.mode === "attach" || state.projectContext) {
+    await ensureConnected();
+  }
 }
 
 main();
