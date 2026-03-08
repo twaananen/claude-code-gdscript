@@ -1,7 +1,7 @@
 {
   "name": "gdscript",
   "description": "GDScript language support for Claude Code via Godot's built-in LSP",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Tommi Waananen"
   },
