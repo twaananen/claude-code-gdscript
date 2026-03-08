@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { existsSync, readdirSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
@@ -62,6 +63,33 @@ function describeError(error) {
     message: error?.message || String(error),
     name: error?.name,
   };
+}
+
+/**
+ * Finds the actual Godot project root by searching for project.godot.
+ * Claude Code sends the workspace CWD as rootUri, but the Godot project
+ * may be in a subdirectory (e.g., game/).
+ */
+function findGodotProjectRoot(startPath) {
+  if (existsSync(path.join(startPath, "project.godot"))) {
+    return startPath;
+  }
+
+  try {
+    const entries = readdirSync(startPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith(".")) {
+        const subPath = path.join(startPath, entry.name);
+        if (existsSync(path.join(subPath, "project.godot"))) {
+          return subPath;
+        }
+      }
+    }
+  } catch {
+    // Directory doesn't exist or isn't readable
+  }
+
+  return null;
 }
 
 function parseJsonMessage(body) {
@@ -261,6 +289,15 @@ async function main() {
     const message = parseJsonMessage(body);
     const projectContext = extractProjectContextFromMessage(body);
     if (projectContext && !state.projectContext) {
+      const godotRoot = findGodotProjectRoot(projectContext.projectRoot);
+      if (godotRoot && godotRoot !== projectContext.projectRoot) {
+        log("godot_project_root_discovered", {
+          originalRoot: projectContext.projectRoot,
+          godotRoot,
+        });
+        projectContext.projectRoot = godotRoot;
+        projectContext.projectName = path.basename(godotRoot);
+      }
       state.projectContext = projectContext;
       log("project_context_resolved", projectContext);
     }
