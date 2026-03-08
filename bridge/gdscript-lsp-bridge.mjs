@@ -230,7 +230,7 @@ async function ensureConnected() {
         message:
           CONFIG.mode === "attach"
             ? "Run Godot for this project and point GODOT_LSP_PORT at the matching editor instance."
-            : "Ensure Godot is available on PATH or set GODOT_EDITOR_PATH, or switch to GODOT_LSP_MODE=attach.",
+            : "Could not find Godot. Checked: GODOT_EDITOR_PATH env, PATH, /Applications/Godot.app, and common install locations. Set GODOT_EDITOR_PATH to your Godot binary, or switch to GODOT_LSP_MODE=attach.",
       });
       process.exit(1);
     }
