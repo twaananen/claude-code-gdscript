@@ -22,7 +22,7 @@
         "gdscript": {
           "command": "node",
           "args": ["${CLAUDE_PLUGIN_ROOT}/bridge/gdscript-lsp-bridge.mjs"],
-          "startupTimeout": 20000,
+          "startupTimeout": 30000,
           "extensionToLanguage": {
             ".gd": "gdscript"
           }
