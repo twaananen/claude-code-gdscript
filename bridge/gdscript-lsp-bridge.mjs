@@ -182,8 +182,24 @@ function flushPendingBodies() {
   }
 }
 
+// Godot-specific notifications that arrive before the initialize response.
+// Claude Code's LSP client doesn't recognize these and they can interfere
+// with the initialization handshake, so we filter them out.
+const GODOT_INTERNAL_METHODS = new Set([
+  "gdscript_client/changeWorkspace",
+]);
+
 function attachSocket(socket, backend) {
   const tcpParser = new LspParser((body) => {
+    try {
+      const msg = JSON.parse(body.toString("utf8"));
+      if (msg.method && GODOT_INTERNAL_METHODS.has(msg.method)) {
+        log("filtered_godot_notification", { method: msg.method });
+        return;
+      }
+    } catch {
+      // Not valid JSON — forward as-is
+    }
     process.stdout.write(encodeLspMessage(body));
   });
 
