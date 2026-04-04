@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "GDScript language support for Claude Code",
-    "version": "1.4.0"
+    "version": "1.4.1"
   },
   "plugins": [
     {
       "name": "gdscript",
       "source": "./",
       "description": "GDScript language support for Claude Code via Godot's built-in LSP",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "Tommi Waananen"
       },
